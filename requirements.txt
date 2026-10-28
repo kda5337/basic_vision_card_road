@@ -1,0 +1,9 @@
+# CardRoad 프로젝트에 필요한 Python 라이브러리
+#
+# 설치 방법 (프로젝트 최상위 폴더에서 실행):
+# python -m pip install -r requirements.txt
+#
+# 새로운 라이브러리가 필요하면 팀원들과 협의 후 추가합니다.
+
+numpy
+opencv-python
