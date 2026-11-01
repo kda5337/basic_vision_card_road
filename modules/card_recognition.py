@@ -98,7 +98,7 @@ def find_card_candidates(frame, edges):
         ratio = max(w, h) / min(w, h)
         rectangularity = area / (w * h)
 
-        if ratio < 1.15 or ratio > 1.45 or rectangularity < 0.65:
+        if ratio < 1.05 or ratio > 1.8 or rectangularity < 0.65:
             continue
 
         candidates.append((area, points))
