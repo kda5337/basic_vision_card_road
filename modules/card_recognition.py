@@ -6,72 +6,21 @@ import numpy as np
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
-def lab_clahe(frame):
-    # BGR → LAB 변환
-    frame_lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-
-    # L 채널에 CLAHE 적용
-    l, a, b = cv2.split(frame_lab) 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    frame_enhanced = clahe.apply(l)
-    frame_lab = cv2.merge((frame_enhanced, a, b))
-
-    # LAB → BGR 변환
-    result = cv2.cvtColor(frame_lab, cv2.COLOR_LAB2BGR)
-
-    return result
-
-
 def preprocess(frame):
-    enhanced = lab_clahe(frame)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-
-    # CLAHE 미적용시 사용 코드
-    # blurred = cv2.GaussianBlur(frame, (5, 5), 0)
+    enhanced = cv2.convertScaleAbs(frame, alpha=0.6, beta=0)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
     return edges
 
 
-def sort_cards_reading_order(cards):
-    if len(cards) <= 1:
-        return list(cards)
-
-    items = []
-    heights = []
-
-    for points in cards:
-        points = np.asarray(points).reshape(4, 2)
-        center_x, center_y = points.mean(axis=0)
-        _, _, _, height = cv2.boundingRect(points.astype(np.int32))
-        items.append((float(center_x), float(center_y), points))
-        heights.append(height)
-
-    row_tolerance = max(1.0, np.median(heights) * 0.5)
-    items.sort(key=lambda item: item[1])
-
-    rows = []
-    for item in items:
-        if not rows or abs(item[1] - np.mean([x[1] for x in rows[-1]])) > row_tolerance:
-            rows.append([item])
-        else:
-            rows[-1].append(item)
-
-    result = []
-    for row in rows:
-        row.sort(key=lambda item: item[0])
-        result.extend(item[2] for item in row)
-
-    return result
-
 def find_card_candidates(frame, edges):
     contours, _ = cv2.findContours(
         edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    min_area = frame.shape[0] * frame.shape[1] * 0.004
+    min_area = frame.shape[0] * frame.shape[1] * 0.001
     candidates = []
 
     for contour in contours:
@@ -130,7 +79,10 @@ def find_card_candidates(frame, edges):
         if not duplicate:
             cards.append((area, points))
 
-    return sort_cards_reading_order([points for _, points in cards])
+    return sorted(
+        [points for _, points in cards],
+        key=lambda points: np.asarray(points).reshape(4, 2)[:, 0].mean(),
+    )
 
 
 def order_points(points):
