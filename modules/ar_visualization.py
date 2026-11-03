@@ -102,6 +102,25 @@ from common.models import (
 )
 
 
+_ERROR_MESSAGES = {
+    "OBSTACLE_COLLISION": "장애물과 충돌했습니다",
+    "OUT_OF_BOUNDS": "맵 밖으로 이동할 수 없습니다",
+    "GOAL_NOT_REACHED": "도착점에 도달하지 못했습니다",
+    "UNCLOSED_LOOP": "반복문을 닫는 카드가 없습니다",
+    "UNEXPECTED_LOOP_END": "반복 시작 카드 없이 종료 카드가 나왔습니다",
+    "NESTED_LOOP": "반복 구간 안에는 다른 반복을 넣을 수 없습니다",
+    "EMPTY_LOOP": "반복할 명령어가 없습니다",
+    "INVALID_COMMAND": "올바르지 않은 명령어 카드입니다",
+    "START_NOT_FOUND": "출발점을 찾지 못했습니다",
+    "GOAL_NOT_FOUND": "도착점을 찾지 못했습니다",
+    "INVALID_MAP": "맵의 크기 또는 칸 정보를 확인해 주세요",
+    "GRID_NOT_FOUND": "격자를 찾지 못했습니다",
+    "MAP_NOT_FOUND": "맵을 찾지 못했습니다",
+    "CARD_NOT_FOUND": "명령어 카드를 찾지 못했습니다",
+    "CARDS_NOT_FOUND": "명령어 카드를 찾지 못했습니다",
+}
+
+
 class ARVisualizer:
     """
     AR 시각화 및 UI를 담당하는 클래스입니다.
@@ -123,15 +142,21 @@ class ARVisualizer:
         초기 상태에서는 애니메이션이 재생 중이지 않습니다.
         """
 
+        self._clear_playback()
+        self._font_path = self._find_font()
+        self._fonts = {}
+        self._text_masks = OrderedDict()
+
+    def _clear_playback(self):
+        """글꼴 캐시는 유지하고 이전 실행의 위치·결과·카드 강조만 제거합니다."""
         self._map = None
         self._cards = []
         self._result = None
         self._transform = None
         self._ends = np.array([], dtype=float)
         self._started_at = 0.0
-        self._font_path = self._find_font()
-        self._fonts = {}
-        self._text_masks = OrderedDict()
+        self._character_rect = None
+        self._displayed_button = None
 
     def begin(
         self,
@@ -201,6 +226,8 @@ class ARVisualizer:
             message (str | None):
                 화면에 표시할 상태 메시지
                 메시지가 없으면 None
+                main.process_game에서 반환한 '맵 인식 실패:' 또는
+                '카드 인식 실패:' 메시지는 이전 재생 상태를 지우고 오류로 표시합니다.
 
         Returns:
             np.ndarray:
@@ -223,10 +250,22 @@ class ARVisualizer:
                 or min(frame.shape[:2]) < 1):
             raise ValueError("frame must be a non-empty uint8 BGR image")
         output = frame.copy()
+        recognition_error = None
+        for prefix in ("맵 인식 실패:", "카드 인식 실패:"):
+            if message and message.startswith(prefix):
+                # 기존 main.process_game의 반환 메시지를 사용하는 호환 경로입니다.
+                # 다른 안내 메시지는 재생 상태를 초기화하지 않습니다.
+                self._clear_playback()
+                code = message[len(prefix):].strip()
+                recognition_error = prefix[:-1]
+                message = _ERROR_MESSAGES.get(code, code)
+                break
         elapsed = max(0.0, monotonic() - self._started_at)
         running = bool(self._ends.size and elapsed < self._ends[-1])
-        status = "시작 버튼을 눌러 주세요"
-        color = (100, 210, 130)
+        status = recognition_error or "시작 버튼을 눌러 주세요"
+        color = (100, 110, 255) if recognition_error else (100, 210, 130)
+        polygon, cross, highlight = None, None, None
+        self._character_rect = None
         if self._result is not None:
             row, col, angle, card_index = self._pose(elapsed)
             # 위쪽을 향하는 파란 삼각형. 좌표 단위는 격자 한 칸입니다.
@@ -234,9 +273,12 @@ class ARVisualizer:
             rotation = np.array([[np.cos(angle), -np.sin(angle)],
                                  [np.sin(angle), np.cos(angle)]])
             points = local @ rotation.T + [col + 0.5, row + 0.5]
-            polygon = self._project(points)
-            cv2.fillConvexPoly(output, polygon, (255, 110, 30), cv2.LINE_AA)
-            cv2.polylines(output, [polygon], True, (255, 255, 255), 2, cv2.LINE_AA)
+            # (-1,-1) 미배치 상태 및 그 밖의 잘못된 위치는 그리지 않습니다.
+            if (self._map.start is not None and np.isfinite([row, col, angle]).all()
+                    and 0 <= row < self._map.rows and 0 <= col < self._map.cols):
+                polygon = self._project(points)
+                x, y, w, h = cv2.boundingRect(polygon)
+                self._character_rect = (x - 4, y - 4, x + w + 4, y + h + 4)
             if running:
                 step_index = int(np.searchsorted(self._ends, elapsed, side="right"))
                 step = self._result.steps[step_index]
@@ -253,15 +295,11 @@ class ARVisualizer:
                     GameStatus.FAILURE: "실패",
                     GameStatus.ERROR: "명령어 오류",
                 }[self._result.status]
+                if self._result.error_code in ("START_NOT_FOUND", "GOAL_NOT_FOUND", "INVALID_MAP"):
+                    status = "맵 정보 오류"
                 if self._result.error_code:
-                    descriptions = {
-                        "OBSTACLE_COLLISION": "장애물과 충돌했습니다",
-                        "OUT_OF_BOUNDS": "맵 밖으로 이동할 수 없습니다",
-                        "GOAL_NOT_REACHED": "도착점에 도달하지 못했습니다",
-                        "UNCLOSED_LOOP": "반복문을 닫는 카드가 없습니다",
-                    }
                     code = self._result.error_code
-                    status += f": {descriptions.get(code, code)}"
+                    status += f": {_ERROR_MESSAGES.get(code, code)}"
                 color = ((100, 220, 130) if self._result.status == GameStatus.SUCCESS
                          else (100, 110, 255))
                 cell = self._result.attempted_cell
@@ -270,15 +308,25 @@ class ARVisualizer:
                     # 실패 위치만 표시하며 캐릭터는 final_state에 유지합니다.
                     cross = self._project([[c + .25, r + .25], [c + .75, r + .75],
                                            [c + .75, r + .25], [c + .25, r + .75]])
-                    cv2.line(output, tuple(cross[0]), tuple(cross[1]), color, 3, cv2.LINE_AA)
-                    cv2.line(output, tuple(cross[2]), tuple(cross[3]), color, 3, cv2.LINE_AA)
             if card_index is not None and 0 <= card_index < len(self._cards):
                 bbox = self._cards[card_index].bbox
                 if bbox is not None:
                     x, y, w, h = map(int, bbox)
                     if w > 0 and h > 0:
-                        cv2.rectangle(output, (x, y), (x + w - 1, y + h - 1), color, 3)
+                        highlight = (x, y, w, h)
         self._draw_ui(output, status, message, running, color)
+        # UI를 둘 빈 공간이 없는 경우에도 캐릭터는 가장 앞에 표시합니다.
+        if polygon is not None:
+            cv2.fillConvexPoly(output, polygon, (255, 110, 30), cv2.LINE_AA)
+            cv2.polylines(output, [polygon], True, (255, 255, 255), 2, cv2.LINE_AA)
+        if cross is not None:
+            cv2.line(output, tuple(cross[0]), tuple(cross[1]), color, 3, cv2.LINE_AA)
+            cv2.line(output, tuple(cross[2]), tuple(cross[3]), color, 3, cv2.LINE_AA)
+        if highlight is not None:
+            x, y, w, h = highlight
+            cv2.rectangle(output, (x, y), (x + w - 1, y + h - 1), color, 3)
+        if not running and self._result is not None:
+            self._draw_result(output)
         return output
 
     def is_finished(self) -> bool:
@@ -327,6 +375,9 @@ class ARVisualizer:
         Start 버튼의 위치, 크기, 디자인 등은
         AR/UI 담당자가 자유롭게 결정합니다.
 
+        버튼은 인식된 맵·카드·캐릭터와의 겹침을 줄이도록 배치하며,
+        클릭은 마지막 render에서 실제로 표시한 버튼 좌표로 판정합니다.
+
         클릭 좌표는 render()에 전달되는 영상과
         동일한 픽셀 좌표계를 사용해야 합니다.
         """
@@ -357,8 +408,10 @@ class ARVisualizer:
         pixels = cv2.perspectiveTransform(points, self._transform)[0]
         return np.rint(pixels).astype(np.int32)
 
-    @staticmethod
-    def _button_rect(frame_shape):
+    def _button_rect(self, frame_shape):
+        # 클릭은 마지막으로 화면에 그린 버튼 위치를 기준으로 판정합니다.
+        if self._displayed_button and self._displayed_button[0] == tuple(frame_shape[:2]):
+            return self._displayed_button[1]
         height, width = frame_shape[:2]
         margin = max(0, min(16, width // 20, height // 20))
         button_width = min(140, max(1, width - 2 * margin))
@@ -366,11 +419,57 @@ class ARVisualizer:
         right, bottom = width - margin, height - margin
         return right - button_width, bottom - button_height, right, bottom
 
+    def _occupied_regions(self):
+        regions = []
+        if self._map is not None:
+            points = self._map.corners
+            regions.append(((float(points[:, 0].min()), float(points[:, 1].min()),
+                             float(points[:, 0].max()), float(points[:, 1].max())), 1))
+        for card in self._cards:
+            if card.bbox is not None:
+                x, y, w, h = card.bbox
+                if w > 0 and h > 0:
+                    regions.append(((x - 4, y - 4, x + w + 4, y + h + 4), 10))
+        if self._character_rect is not None:
+            regions.append((self._character_rect, 1000))
+        return regions
+
+    @staticmethod
+    def _overlap_score(rect, regions):
+        left, top, right, bottom = rect
+        return sum(max(0, min(right, r) - max(left, l))
+                   * max(0, min(bottom, b) - max(top, t)) * weight
+                   for (l, t, r, b), weight in regions)
+
+    def _place_ui(self, frame_shape, panel_height):
+        height, width = frame_shape[:2]
+        margin = max(0, min(16, width // 20, height // 20))
+        bw, bh = min(140, max(1, width - 2 * margin)), min(48, max(1, height - 2 * margin))
+        regions = self._occupied_regions()
+        result_rect = self._result_rect(frame_shape)
+        if result_rect is not None:
+            regions.append((result_rect, 1000))
+        # 기본은 오른쪽 아래. 다른 여백이 있으면 맵/카드/캐릭터를 피해 이동합니다.
+        candidates = [(x, y, x + bw, y + bh)
+                      for y in (height - margin - bh, margin, (height - bh) // 2)
+                      for x in (width - margin - bw, margin, (width - bw) // 2)]
+        previous = self._button_rect(frame_shape)
+        button = min([previous] + candidates, key=lambda r: self._overlap_score(r, regions))
+        self._displayed_button = (tuple(frame_shape[:2]), button)
+        pw, ph = min(width, 640), min(height, panel_height)
+        panels = [(x, y, x + pw, y + ph)
+                  for y in (0, height - ph, (height - ph) // 2)
+                  for x in (0, width - pw, (width - pw) // 2)]
+        panel = min(panels, key=lambda r: self._overlap_score(r, regions + [(button, 100)]))
+        return panel, button
+
     @staticmethod
     def _find_font():
-        """운영체제의 한글 글꼴 사용. 글꼴 파일은 제출물에 복사하지 않습니다."""
+        """동봉한 Noto Sans KR을 우선 사용하고 운영체제 글꼴로 대체합니다."""
         override = os.environ.get("CARDROAD_FONT_PATH")
         candidates = ([Path(override)] if override else [
+            Path(__file__).resolve().parent / "assets/fonts/NotoSansKR.ttf",
+            Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts/NotoSansKR-VF.ttf",
             Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts/malgun.ttf",
             Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
             Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
@@ -399,17 +498,30 @@ class ARVisualizer:
         if key in self._text_masks:
             self._text_masks.move_to_end(key)
             return self._text_masks[key]
+        # 작은 크기의 내장 비트맵 대신 2배 크기의 윤곽선을 축소해 획을 매끈하게 합니다.
+        factor = 2
         if size not in self._fonts:
-            self._fonts[size] = ImageFont.truetype(self._font_path, size)
+            font = ImageFont.truetype(self._font_path, size * factor)
+            try:
+                axes = font.get_variation_axes()
+            except OSError:  # 일반 TTF에는 가변 축이 없습니다.
+                axes = []
+            if axes:
+                font.set_variation_by_axes([
+                    max(axis["minimum"], min(400, axis["maximum"]))
+                    if axis["name"] == b"Weight" else axis["default"]
+                    for axis in axes
+                ])
+            self._fonts[size] = font
         font = self._fonts[size]
-        if font.getlength(text) > width:
+        if font.getlength(text) > width * factor:
             suffix = "…"
-            if font.getlength(suffix) > width:
+            if font.getlength(suffix) > width * factor:
                 return None
             low, high = 0, len(text)
             while low < high:
                 middle = (low + high + 1) // 2
-                if font.getlength(text[:middle] + suffix) <= width:
+                if font.getlength(text[:middle] + suffix) <= width * factor:
                     low = middle
                 else:
                     high = middle - 1
@@ -417,8 +529,13 @@ class ARVisualizer:
         left, top, right, bottom = font.getbbox(text, anchor="ls")
         if right <= left or bottom <= top:
             return None
-        mask = Image.new("L", (right - left, bottom - top), 0)
-        ImageDraw.Draw(mask).text((-left, -top), text, font=font, fill=255, anchor="ls")
+        # 기준선을 정수 픽셀에 맞추고 축소 필터 여백을 확보합니다.
+        left, top = left // factor - 1, top // factor - 1
+        right, bottom = (right + factor - 1) // factor + 1, (bottom + factor - 1) // factor + 1
+        mask = Image.new("L", ((right - left) * factor, (bottom - top) * factor), 0)
+        ImageDraw.Draw(mask).text((-left * factor, -top * factor), text,
+                                  font=font, fill=255, anchor="ls")
+        mask = mask.resize((right - left, bottom - top), Image.Resampling.LANCZOS)
         result = (left, top, np.asarray(mask))
         self._text_masks[key] = result
         if len(self._text_masks) > 128:
@@ -445,16 +562,88 @@ class ARVisualizer:
         region[:] = np.rint(region * (1 - alpha) + np.asarray(color) * alpha).astype(np.uint8)
 
     def _draw_ui(self, frame, status, message, running, color):
-        height, width = frame.shape[:2]
-        panel_height = min(height, 72 if message else 42)
-        panel = frame[:panel_height]
-        panel[:] = (panel.astype(np.float32) * .25).astype(np.uint8)
-        self._label(frame, status, (12, 27), width - 24, color)
-        if message:
-            self._label(frame, message, (12, 56), width - 24, (240, 240, 240), .5)
-        left, top, right, bottom = self._button_rect(frame.shape)
-        cv2.rectangle(frame, (left, top), (right - 1, bottom - 1),
-                      (90, 90, 90) if running else (70, 150, 40), -1)
+        panel_rect, button_rect = self._place_ui(frame.shape, 88 if message else 56)
+        px, py, pr, pb = panel_rect
+        centered_result = self._result_rect(frame.shape) is not None
+        if not centered_result or message:
+            panel = frame[py:pb, px:pr]
+            # 완료 결과는 중앙에만 표시하고 외부 안내 메시지는 유지합니다.
+            panel[:] = (36, 30, 25)
+            panel[:, :4] = color
+            self._label(panel, message if centered_result else status, (16, 35),
+                        pr - px - 32, (250, 248, 245), 24 / 34)
+            if message and not centered_result:
+                self._label(panel, message, (16, 67), pr - px - 32, (205, 198, 188), 18 / 34)
+        left, top, right, bottom = button_rect
+        button = frame[top:bottom, left:right]
+        button[:] = (83, 76, 67) if running else (135, 108, 24)
         label = "재생 중" if running else "시작"
-        self._label(frame, label, (left + 12, top + (bottom - top) // 2 + 7),
-                    right - left - 24, (255, 255, 255))
+        mask_data = self._text_mask(label, right - left - 24, 22)
+        if mask_data is not None:
+            x, y, mask = mask_data
+            position = ((right - left - mask.shape[1]) // 2 - x,
+                        (bottom - top - mask.shape[0]) // 2 - y)
+            self._label(button, label, position, right - left - 24,
+                        (255, 255, 255), 22 / 34)
+
+    def _result_rect(self, frame_shape):
+        """성공·실패가 확정된 뒤 화면 중앙에 결과 영역을 배치합니다."""
+        if (self._result is None or not self.is_finished()
+                or self._result.status not in (GameStatus.SUCCESS, GameStatus.FAILURE)):
+            return None
+        height, width = frame_shape[:2]
+        box_width = min(480, max(1, width - 32))
+        box_height = min(112, max(1, height - 32))
+        left, top = (width - box_width) // 2, (height - box_height) // 2
+        return left, top, left + box_width, top + box_height
+
+    def _draw_result(self, frame):
+        rect = self._result_rect(frame.shape)
+        if rect is None:
+            return
+        left, top, right, bottom = rect
+        panel = frame[top:bottom, left:right]
+        height, width = panel.shape[:2]
+        # 둥근 모서리 바깥의 영상은 그대로 두고 작은 배너만 합성합니다.
+        radius = min(36, width // 2, height // 2)
+        for fill, outline, color in ((255, None, (35, 29, 24)),
+                                     (None, 255, (78, 70, 60))):
+            mask = Image.new("L", (width * 2, height * 2), 0)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (0, 0, width * 2 - 1, height * 2 - 1), radius * 2,
+                fill=fill, outline=outline, width=4)
+            alpha = np.asarray(mask.resize((width, height), Image.Resampling.LANCZOS))
+            alpha = alpha[:, :, None].astype(np.float32) / 255.
+            panel[:] = np.rint(panel * (1 - alpha) + np.asarray(color) * alpha).astype(np.uint8)
+        if width < 160 or height < 56:
+            return
+        success = self._result.status == GameStatus.SUCCESS
+        accent = (139, 218, 99) if success else (115, 119, 249)
+        scale = min(1., width / 480, height / 112)
+        cx, cy = round(46 * scale), height // 2
+        cv2.circle(panel, (cx, cy), round(24 * scale), (53, 48, 39), -1, cv2.LINE_AA)
+        if success:
+            points = np.rint(np.float32([[-12, 0], [-3, 9], [14, -10]]) * scale
+                             + [cx, cy]).astype(np.int32)
+            cv2.polylines(panel, [points], False, accent, max(2, round(4 * scale)), cv2.LINE_AA)
+        else:
+            cv2.line(panel, (cx, cy - round(12 * scale)), (cx, cy + round(3 * scale)),
+                     accent, max(2, round(4 * scale)), cv2.LINE_AA)
+            cv2.circle(panel, (cx, cy + round(12 * scale)), 2, accent, -1, cv2.LINE_AA)
+        title = "성공!" if success else "실패"
+        code = self._result.error_code
+        detail = ("도착점에 도착했습니다" if success else
+                  _ERROR_MESSAGES.get(code, code or "도착점에 도달하지 못했습니다"))
+        # 아이콘 오른쪽의 텍스트 영역에 두 줄을 가운데 정렬합니다.
+        text_left, text_right = round(80 * scale), width - round(34 * scale)
+        text_width = text_right - text_left
+        for text, size, center_y, color in (
+                (title, max(12, round(30 * scale)), height * .30, accent),
+                (detail, max(12, round(20 * scale)), height * .71, (250, 248, 245))):
+            mask_data = self._text_mask(text, text_width, size)
+            if mask_data is None:
+                continue
+            x, y, mask = mask_data
+            position = (text_left + (text_width - mask.shape[1]) // 2 - x,
+                        round(center_y - mask.shape[0] / 2) - y)
+            self._label(panel, text, position, text_width, color, size / 34)

@@ -105,8 +105,8 @@ class ARTests(unittest.TestCase):
         frame = np.zeros((100, 400, 3), dtype=np.uint8)
         with patch.object(self.ar, "_label", wraps=self.ar._label) as label:
             rendered = self.ar.render(frame, "맵 인식 실패: 격자를 다시 확인해 주세요")
-        self.assertTrue(any(call.args[1] == "맵 인식 실패: 격자를 다시 확인해 주세요"
-                            for call in label.call_args_list))
+        self.assertTrue(any(call.args[1] == "맵 인식 실패" for call in label.call_args_list))
+        self.assertTrue(any(call.args[1] == "격자를 다시 확인해 주세요" for call in label.call_args_list))
         self.assertTrue(np.any(rendered[36:59, 12:390]))
         self.assertFalse(np.any(frame))
 
