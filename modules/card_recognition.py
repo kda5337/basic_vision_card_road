@@ -6,9 +6,30 @@ import numpy as np
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
+def lab_clahe(frame):
+    # BGR → LAB 변환
+    frame_lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+
+    # L 채널에 CLAHE 적용
+    l, a, b = cv2.split(frame_lab) 
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    frame_enhanced = clahe.apply(l)
+    frame_lab = cv2.merge((frame_enhanced, a, b))
+
+    # LAB → BGR 변환
+    result = cv2.cvtColor(frame_lab, cv2.COLOR_LAB2BGR)
+
+    return result
+
+
 def preprocess(frame):
+    # enhanced = lab_clahe(frame)
     enhanced = cv2.convertScaleAbs(frame, alpha=0.6, beta=0)
+
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+
+    # CLAHE 미적용시 사용 코드
+    # blurred = cv2.GaussianBlur(frame, (5, 5), 0)
     blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
@@ -16,10 +37,10 @@ def preprocess(frame):
 
 
 def find_card_candidates(frame, edges):
+    roi_y = int(frame.shape[0] * 0.7)
     contours, _ = cv2.findContours(
-        edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        edges[roi_y:, :], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
-
     min_area = frame.shape[0] * frame.shape[1] * 0.001
     candidates = []
 
@@ -50,6 +71,7 @@ def find_card_candidates(frame, edges):
         if ratio < 1.05 or ratio > 1.8 or rectangularity < 0.65:
             continue
 
+        points[:, 1] += roi_y
         candidates.append((area, points))
 
     cards = []
@@ -79,8 +101,20 @@ def find_card_candidates(frame, edges):
         if not duplicate:
             cards.append((area, points))
 
+    points_list = [points for _, points in cards]
+    if len(points_list) > 1:
+        centers_y = [points[:, 1].mean() for points in points_list]
+        heights = [cv2.boundingRect(points)[3] for points in points_list]
+        middle_y = np.median(centers_y)
+        middle_height = np.median(heights)
+        points_list = [
+            points for points, center_y, height in zip(points_list, centers_y, heights)
+            if abs(center_y - middle_y) <= middle_height * 0.45
+            and middle_height * 0.6 <= height <= middle_height * 1.6
+        ]
+
     return sorted(
-        [points for _, points in cards],
+        points_list,
         key=lambda points: np.asarray(points).reshape(4, 2)[:, 0].mean(),
     )
 
@@ -300,4 +334,3 @@ def detect_cards(frame):
         cards.append(CardData(command=command, bbox=bbox, confidence=confidence))
 
     return DetectionResult(data=cards, error_code=None)
-
