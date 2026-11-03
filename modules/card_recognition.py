@@ -300,3 +300,4 @@ def detect_cards(frame):
         cards.append(CardData(command=command, bbox=bbox, confidence=confidence))
 
     return DetectionResult(data=cards, error_code=None)
+
