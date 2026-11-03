@@ -6,30 +6,9 @@ import numpy as np
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
-def lab_clahe(frame):
-    # BGR → LAB 변환
-    frame_lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-
-    # L 채널에 CLAHE 적용
-    l, a, b = cv2.split(frame_lab) 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    frame_enhanced = clahe.apply(l)
-    frame_lab = cv2.merge((frame_enhanced, a, b))
-
-    # LAB → BGR 변환
-    result = cv2.cvtColor(frame_lab, cv2.COLOR_LAB2BGR)
-
-    return result
-
-
 def preprocess(frame):
-    # enhanced = lab_clahe(frame)
     enhanced = cv2.convertScaleAbs(frame, alpha=0.6, beta=0)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-
-    # CLAHE 미적용시 사용 코드
-    # blurred = cv2.GaussianBlur(frame, (5, 5), 0)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
@@ -37,10 +16,11 @@ def preprocess(frame):
 
 
 def find_card_candidates(frame, edges):
-    roi_y = int(frame.shape[0] * 0.7)
+    roi_y = int(frame.shape[0] * 0.75)
     contours, _ = cv2.findContours(
         edges[roi_y:, :], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
+
     min_area = frame.shape[0] * frame.shape[1] * 0.001
     candidates = []
 
@@ -215,13 +195,11 @@ def _symbol_similarity(image_a, image_b):
 def detect_arrow(
     card,
     templates=None,
+    min_score=0.50,
+    min_margin=0.08,
     debug=False,
 ):
-    """기호 전체를 정규화해 템플릿과 비교한다.
-
-    Returns:
-        가장 유사한 템플릿 라벨과 유사도 점수.
-    """
+    
     if card is None or card.size == 0:
         return "UNKNOWN", 0.0
     gray = cv2.cvtColor(card, cv2.COLOR_BGR2GRAY)
@@ -253,12 +231,15 @@ def detect_arrow(
 
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     best_label, best_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0.0
 
     if debug:
         print("Template scores:", ", ".join(
             f"{label}={score:.3f}" for label, score in ranked
         ))
 
+    if best_score < min_score or best_score - second_score < min_margin:
+        return "UNKNOWN", float(best_score)
     return best_label, float(best_score)
 
 def analyze_frame(frame, templates=None):
@@ -295,11 +276,7 @@ def _get_command(label, Command):
 
 
 def detect_cards(frame):
-    """웹캠 프레임 한 장에서 카드를 인식해 공통 결과 형식으로 반환한다.
-
-    반환되는 CardData 목록은 위쪽 행부터, 각 행에서 왼쪽에서 오른쪽 순서다.
-    카드가 없거나 기호를 판별/매핑할 수 없으면 data=None과 오류 코드를 반환한다.
-    """
+    
     from common.models import CardData, Command, DetectionResult
 
     if not isinstance(frame, np.ndarray) or frame.size == 0 or frame.ndim != 3 or frame.shape[2] != 3:
