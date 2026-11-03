@@ -6,6 +6,28 @@ import numpy as np
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
+def _map_bounds(frame):
+    try:
+        from modules.map_recognition import detect_map
+
+        result = detect_map(frame)
+        if not result.ok or result.data is None:
+            return None
+
+        corners = np.asarray(result.data.corners, dtype=np.int32).reshape(-1, 2)
+        x, y, width, height = cv2.boundingRect(corners)
+        pad_x = int(width * 0.04)
+        pad_y = int(height * 0.04)
+        return (
+            max(0, x - pad_x),
+            max(0, y - pad_y),
+            min(frame.shape[1], x + width + pad_x),
+            min(frame.shape[0], y + height + pad_y),
+        )
+    except (ImportError, AttributeError, cv2.error):
+        return None
+
+
 def preprocess(frame):
     enhanced = cv2.convertScaleAbs(frame, alpha=0.6, beta=0)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -16,9 +38,9 @@ def preprocess(frame):
 
 
 def find_card_candidates(frame, edges):
-    roi_y = int(frame.shape[0] * 0.75)
+    map_bounds = _map_bounds(frame)
     contours, _ = cv2.findContours(
-        edges[roi_y:, :], cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+        edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
     )
 
     min_area = frame.shape[0] * frame.shape[1] * 0.001
@@ -51,7 +73,13 @@ def find_card_candidates(frame, edges):
         if ratio < 1.05 or ratio > 1.8 or rectangularity < 0.65:
             continue
 
-        points[:, 1] += roi_y
+        if map_bounds is not None:
+            x1, y1, x2, y2 = map_bounds
+            card_x, card_y, card_w, card_h = cv2.boundingRect(points)
+            if (card_x < x2 and card_x + card_w > x1
+                    and card_y < y2 and card_y + card_h > y1):
+                continue
+
         candidates.append((area, points))
 
     cards = []
