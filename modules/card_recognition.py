@@ -18,7 +18,7 @@ def preprocess(frame):
 def find_card_candidates(frame, edges):
     roi_y = int(frame.shape[0] * 0.75)
     contours, _ = cv2.findContours(
-        edges[roi_y:, :], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        edges[roi_y:, :], cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
     )
 
     min_area = frame.shape[0] * frame.shape[1] * 0.001
@@ -196,7 +196,7 @@ def detect_arrow(
     card,
     templates=None,
     min_score=0.50,
-    min_margin=0.08,
+    min_margin=0.04,
     debug=False,
 ):
     
