@@ -12,6 +12,37 @@ from modules.ar_visualization import ARVisualizer
 
 
 class RegressionTests(unittest.TestCase):
+    def test_result_banner_expires_five_seconds_after_first_display_and_restarts(self):
+        frame = np.zeros((600, 960, 3), np.uint8)
+        for scenario, title in [('success', '성공!'), ('collision', '실패')]:
+            with self.subTest(scenario=scenario), patch('modules.ar_visualization.monotonic', return_value=100.) as clock:
+                board, cards, result = sample(scenario=scenario)
+                ar = ARVisualizer()
+                ar.begin(board, cards, result)
+
+                def visible_labels():
+                    with patch.object(ar, '_label', wraps=ar._label) as labels:
+                        ar.render(frame)
+                    return [call.args[1] for call in labels.call_args_list]
+
+                self.assertNotIn(title, visible_labels())
+                # 완료 프레임을 늦게 받아도 실제 표시 후 5초 동안 보입니다.
+                clock.return_value = 120.
+                self.assertIn(title, visible_labels())
+                clock.return_value = 124.999
+                self.assertIn(title, visible_labels())
+                clock.return_value = 125.
+                labels = visible_labels()
+                self.assertFalse(any('성공' in text or '실패' in text for text in labels))
+                self.assertIn('시작', labels)
+                self.assertIsNotNone(ar._result)
+                clock.return_value = 130.
+                self.assertNotIn(title, visible_labels())
+                ar.begin(board, cards, result)
+                self.assertNotIn(title, visible_labels())
+                clock.return_value = 140.
+                self.assertIn(title, visible_labels())
+
     def test_unplaced_or_invalid_character_is_not_drawn(self):
         board = MapData(5, 5, [[0]*5 for _ in range(5)], None, (0, 4),
                         np.float32([[200, 200], [600, 200], [600, 600], [200, 600]]))
