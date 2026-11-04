@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import argparse
 
 from common.models import MapData, DetectionResult
 from pathlib import Path
@@ -267,8 +266,6 @@ def _directional_strokes(ink):
 
 # 손그림의 선과 교점을 찾아 격자를 구성하고 각 칸의 내용을 판별.
 def _handdrawn_maps(frame, directional=False):
-
-
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     background = cv2.GaussianBlur(gray, (0, 0), 9)
     if directional:
@@ -347,8 +344,6 @@ def format_map_result(result: DetectionResult[MapData]) -> str:
 
 # 입력 사진에서 격자를 찾아 맵 정보 또는 오류 코드를 반환.
 def detect_map(frame: np.ndarray) -> DetectionResult[MapData]:
-
-
     if (not isinstance(frame, np.ndarray) or frame.dtype != np.uint8
             or frame.ndim != 3 or frame.shape[2] != 3
             or min(frame.shape[:2]) < 32):
@@ -475,7 +470,7 @@ def draw_map_preview(frame: np.ndarray, data: MapData) -> np.ndarray:
 def main() -> int:
     # modules/map_recognition.py를 기준으로 프로젝트의 사진을 찾기.
     project_root = Path(__file__).resolve().parents[1]
-    image_path = project_root / "test_pictures" / "picture_8.jpg"
+    image_path = project_root / "test_pictures" / "picture_6.jpg"
 
     try:
         encoded = np.fromfile(image_path, dtype=np.uint8)
