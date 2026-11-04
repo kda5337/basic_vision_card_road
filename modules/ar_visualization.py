@@ -157,6 +157,7 @@ class ARVisualizer:
         self._started_at = 0.0
         self._character_rect = None
         self._displayed_button = None
+        self._result_shown_at = None
 
     def begin(
         self,
@@ -199,17 +200,19 @@ class ARVisualizer:
                 or not cv2.isContourConvex(corners)
                 or abs(cv2.contourArea(corners)) < 1.0):
             raise ValueError("Map corners must form a non-degenerate convex quadrilateral")
-        # 격자 평면에서 이동/회전한 뒤 원본 영상에 투영해야 원근이 유지됩니다.
+        # 좌표 변환 부분은 OpenCV 원근 변환을 사용해 격자 네 꼭짓점을 영상에 맞춥니다.
         source = np.float32([[0, 0], [map_data.cols, 0],
                              [map_data.cols, map_data.rows], [0, map_data.rows]])
         transform = cv2.getPerspectiveTransform(source, corners)
         # 실행 도중 인식 모듈이 원래 객체를 갱신해도 재생 내용은 유지합니다.
         self._map, self._cards, self._result = deepcopy((map_data, cards, result))
         self._transform = transform
+        # 애니메이션은 명령 처리 팀의 실행 기록을 사용하며, 전진 0.6초·회전 0.4초로 재생합니다.
         durations = [0.6 if step.command == Command.FORWARD else 0.4
                      for step in self._result.steps]
         self._ends = np.cumsum(durations)
         self._started_at = monotonic()
+        self._result_shown_at = None
 
     def render(
         self,
@@ -249,6 +252,7 @@ class ARVisualizer:
                 or frame.ndim != 3 or frame.shape[2] != 3
                 or min(frame.shape[:2]) < 1):
             raise ValueError("frame must be a non-empty uint8 BGR image")
+        # 합성 영상은 원본 프레임을 복사해 만들고, 입력과 같은 크기의 BGR 영상으로 반환합니다.
         output = frame.copy()
         recognition_error = None
         for prefix in ("맵 인식 실패:", "카드 인식 실패:"):
@@ -262,6 +266,11 @@ class ARVisualizer:
                 break
         elapsed = max(0.0, monotonic() - self._started_at)
         running = bool(self._ends.size and elapsed < self._ends[-1])
+        if (not running and self._result is not None
+                and self._result.status in (GameStatus.SUCCESS, GameStatus.FAILURE)
+                and self._result_shown_at is None):
+            # 실제로 결과를 처음 표시한 프레임부터 5초를 셉니다.
+            self._result_shown_at = monotonic()
         status = recognition_error or "시작 버튼을 눌러 주세요"
         color = (100, 110, 255) if recognition_error else (100, 210, 130)
         polygon, cross, highlight = None, None, None
@@ -308,6 +317,7 @@ class ARVisualizer:
                     # 실패 위치만 표시하며 캐릭터는 final_state에 유지합니다.
                     cross = self._project([[c + .25, r + .25], [c + .75, r + .75],
                                            [c + .75, r + .25], [c + .25, r + .75]])
+            # 카드 강조 부분은 실행 기록의 카드 번호와 인식된 bbox(카드 영역)를 연결합니다.
             if card_index is not None and 0 <= card_index < len(self._cards):
                 bbox = self._cards[card_index].bbox
                 if bbox is not None:
@@ -317,6 +327,7 @@ class ARVisualizer:
         self._draw_ui(output, status, message, running, color)
         # UI를 둘 빈 공간이 없는 경우에도 캐릭터는 가장 앞에 표시합니다.
         if polygon is not None:
+            # 캐릭터 합성 부분은 fillConvexPoly를 사용해 영상 위에 파란 삼각형을 채워 그립니다.
             cv2.fillConvexPoly(output, polygon, (255, 110, 30), cv2.LINE_AA)
             cv2.polylines(output, [polygon], True, (255, 255, 255), 2, cv2.LINE_AA)
         if cross is not None:
@@ -395,7 +406,8 @@ class ARVisualizer:
         step = self._result.steps[index]
         start = self._ends[index - 1] if index else 0.0
         progress = np.clip((elapsed - start) / (self._ends[index] - start), 0, 1)
-        progress = progress * progress * (3 - 2 * progress)  # 부드러운 가감속
+        # 움직임 부분은 시간 보간을 사용하고, smoothstep으로 출발과 정지를 부드럽게 만듭니다.
+        progress = progress * progress * (3 - 2 * progress)
         before, after = step.before, step.after
         turn = (int(after.direction) - int(before.direction) + 2) % 4 - 2
         row = before.row + (after.row - before.row) * progress
@@ -405,6 +417,7 @@ class ARVisualizer:
 
     def _project(self, points):
         points = np.asarray(points, np.float32).reshape(1, -1, 2)
+        # 실제 화면 위치는 perspectiveTransform으로 격자 좌표를 픽셀 좌표로 바꿔 구합니다.
         pixels = cv2.perspectiveTransform(points, self._transform)[0]
         return np.rint(pixels).astype(np.int32)
 
@@ -493,6 +506,7 @@ class ARVisualizer:
 
     def _text_mask(self, text, width, size):
         """텍스트 영역만 그려 캐시합니다. 매 프레임 전체 영상을 PIL로 바꾸지 않습니다."""
+        # 한글 출력 부분은 Pillow와 Noto Sans KR을 사용하고, 그린 글자를 캐시에 재사용합니다.
         text = " ".join(text.split())
         key = (text, width, size)
         if key in self._text_masks:
@@ -564,15 +578,16 @@ class ARVisualizer:
     def _draw_ui(self, frame, status, message, running, color):
         panel_rect, button_rect = self._place_ui(frame.shape, 88 if message else 56)
         px, py, pr, pb = panel_rect
-        centered_result = self._result_rect(frame.shape) is not None
-        if not centered_result or message:
+        completed_result = (not running and self._result is not None
+                            and self._result.status in (GameStatus.SUCCESS, GameStatus.FAILURE))
+        if not completed_result or message:
             panel = frame[py:pb, px:pr]
             # 완료 결과는 중앙에만 표시하고 외부 안내 메시지는 유지합니다.
             panel[:] = (36, 30, 25)
             panel[:, :4] = color
-            self._label(panel, message if centered_result else status, (16, 35),
+            self._label(panel, message if completed_result else status, (16, 35),
                         pr - px - 32, (250, 248, 245), 24 / 34)
-            if message and not centered_result:
+            if message and not completed_result:
                 self._label(panel, message, (16, 67), pr - px - 32, (205, 198, 188), 18 / 34)
         left, top, right, bottom = button_rect
         button = frame[top:bottom, left:right]
@@ -587,9 +602,12 @@ class ARVisualizer:
                         (255, 255, 255), 22 / 34)
 
     def _result_rect(self, frame_shape):
-        """성공·실패가 확정된 뒤 화면 중앙에 결과 영역을 배치합니다."""
+        """성공·실패 결과를 처음 표시한 때부터 5초 동안 중앙에 배치합니다."""
+        # 결과 표시 시간은 monotonic 타이머로 확인하므로 화면을 멈추지 않고 5초 뒤 숨깁니다.
         if (self._result is None or not self.is_finished()
-                or self._result.status not in (GameStatus.SUCCESS, GameStatus.FAILURE)):
+                or self._result.status not in (GameStatus.SUCCESS, GameStatus.FAILURE)
+                or self._result_shown_at is None
+                or monotonic() - self._result_shown_at >= 5.0):
             return None
         height, width = frame_shape[:2]
         box_width = min(480, max(1, width - 32))
@@ -604,7 +622,7 @@ class ARVisualizer:
         left, top, right, bottom = rect
         panel = frame[top:bottom, left:right]
         height, width = panel.shape[:2]
-        # 둥근 모서리 바깥의 영상은 그대로 두고 작은 배너만 합성합니다.
+        # 결과 배너는 Pillow의 둥근 사각형과 알파 합성을 사용해 모서리 밖의 영상을 보존합니다.
         radius = min(36, width // 2, height // 2)
         for fill, outline, color in ((255, None, (35, 29, 24)),
                                      (None, 255, (78, 70, 60))):
