@@ -311,9 +311,11 @@ class ARVisualizer:
                     cross = self._project([[c + .25, r + .25], [c + .75, r + .75],
                                            [c + .75, r + .25], [c + .25, r + .75]])
                 if self._result_message_expired(elapsed):
-                    # 완료 상태는 유지하되 결과 문구는 5초 뒤 기본 안내로 되돌립니다.
+                    # 완료 상태는 유지하되 결과 문구와 캐릭터는 5초 뒤 숨깁니다.
                     status = "시작 버튼을 눌러 주세요"
                     color = (100, 210, 130)
+                    polygon = None
+                    self._character_rect = None
                     cross = None
                     card_index = None
             if card_index is not None and 0 <= card_index < len(self._cards):
