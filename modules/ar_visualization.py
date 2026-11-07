@@ -120,6 +120,8 @@ _ERROR_MESSAGES = {
     "CARDS_NOT_FOUND": "명령어 카드를 찾지 못했습니다",
 }
 
+_RESULT_MESSAGE_SECONDS = 5.0
+
 
 class ARVisualizer:
     """
@@ -308,6 +310,12 @@ class ARVisualizer:
                     # 실패 위치만 표시하며 캐릭터는 final_state에 유지합니다.
                     cross = self._project([[c + .25, r + .25], [c + .75, r + .75],
                                            [c + .75, r + .25], [c + .25, r + .75]])
+                if self._result_message_expired(elapsed):
+                    # 완료 상태는 유지하되 결과 문구는 5초 뒤 기본 안내로 되돌립니다.
+                    status = "시작 버튼을 눌러 주세요"
+                    color = (100, 210, 130)
+                    cross = None
+                    card_index = None
             if card_index is not None and 0 <= card_index < len(self._cards):
                 bbox = self._cards[card_index].bbox
                 if bbox is not None:
@@ -589,13 +597,23 @@ class ARVisualizer:
     def _result_rect(self, frame_shape):
         """성공·실패가 확정된 뒤 화면 중앙에 결과 영역을 배치합니다."""
         if (self._result is None or not self.is_finished()
-                or self._result.status not in (GameStatus.SUCCESS, GameStatus.FAILURE)):
+                or self._result.status not in (GameStatus.SUCCESS, GameStatus.FAILURE)
+                or self._result_message_expired()):
             return None
         height, width = frame_shape[:2]
         box_width = min(480, max(1, width - 32))
         box_height = min(112, max(1, height - 32))
         left, top = (width - box_width) // 2, (height - box_height) // 2
         return left, top, left + box_width, top + box_height
+
+    def _result_message_expired(self, elapsed=None):
+        """애니메이션이 끝난 시점부터 결과 안내를 5초간 표시합니다."""
+        if self._result is None:
+            return False
+        if elapsed is None:
+            elapsed = max(0.0, monotonic() - self._started_at)
+        finished_at = float(self._ends[-1]) if self._ends.size else 0.0
+        return elapsed >= finished_at + _RESULT_MESSAGE_SECONDS
 
     def _draw_result(self, frame):
         rect = self._result_rect(frame.shape)
