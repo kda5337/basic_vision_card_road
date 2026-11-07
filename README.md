@@ -51,6 +51,12 @@ Forward → Turn Right → Forward → Turn Right
 
 Multiple separate loops are supported. **Nested loops are not supported** in the current version.
 
+### Download and Print the Cards
+
+**[Download the Printable Command Cards (A4 PDF)](assets/printables/CardRoad_Cards_A4.pdf)**
+
+The PDF contains **18 cards: three copies of each of the six supported commands**. Print it on **A4 paper in landscape orientation at 100% / Actual Size** (disable *Fit to Page*), then cut along the black card borders. Place the cards in a single row below the grid map before starting the game.
+
 ### Execution Outcomes
 
 | Status | Condition |
