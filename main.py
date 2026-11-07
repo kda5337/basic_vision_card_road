@@ -8,6 +8,7 @@ S/Space/시작 버튼: 게임 실행 | M: 맵 확인 | C: 카드 확인 | R: 실
 
 import argparse
 import traceback
+from time import monotonic
 
 import cv2
 import numpy as np
@@ -145,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     pending_start = False
     frame_shape: tuple[int, ...] | None = None
     message: str | None = None
+    message_started_at: float | None = None
     diagnostic_frame: np.ndarray | None = None
 
     print("[CardRoad] S/Space/시작 버튼: 게임 | M: 맵 확인 | "
@@ -155,6 +157,11 @@ def main(argv: list[str] | None = None) -> int:
         if (event == cv2.EVENT_LBUTTONDOWN and frame_shape is not None
                 and ar.is_finished() and ar.is_start_clicked(x, y, frame_shape)):
             pending_start = True
+
+    def show_message(text: str | None) -> None:
+        nonlocal message, message_started_at
+        message = text
+        message_started_at = monotonic() if text is not None else None
 
     try:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
@@ -172,12 +179,16 @@ def main(argv: list[str] | None = None) -> int:
                 diagnostic_frame = None
                 try:
                     # UI가 합성되지 않은 원본 프레임 복사본만 인식에 전달합니다.
-                    message = process_game(frame.copy(), ar)
+                    show_message(process_game(frame.copy(), ar))
                     if message is not None:
                         print(message)
                 except Exception as exc:
                     traceback.print_exc()
-                    message = f"실행 오류: {type(exc).__name__}"
+                    show_message(f"실행 오류: {type(exc).__name__}")
+
+            if (message_started_at is not None
+                    and monotonic() - message_started_at >= 5.0):
+                show_message(None)
 
             display_frame = diagnostic_frame if diagnostic_frame is not None else frame
             cv2.imshow(window, ar.render(display_frame, message))
@@ -196,15 +207,15 @@ def main(argv: list[str] | None = None) -> int:
                         print_card_diagnostics(card_result.data)
                         diagnostic_frame = draw_card_diagnostics(
                             diagnostic_frame, card_result.data)
-                        message = (f"카드 {len(card_result.data)}장 인식 완료 "
-                                   "· R: 실시간 화면 · S: 게임 시작")
+                        show_message(f"카드 {len(card_result.data)}장 인식 완료 "
+                                     "· R: 실시간 화면 · S: 게임 시작")
                     else:
                         error = card_result.error_code or "NO_CARDS"
-                        message = f"카드 인식 실패: {error} · R: 실시간 화면"
+                        show_message(f"카드 인식 실패: {error} · R: 실시간 화면")
                         print(message)
                 except Exception as exc:
                     traceback.print_exc()
-                    message = f"카드 인식 실행 오류: {type(exc).__name__}"
+                    show_message(f"카드 인식 실행 오류: {type(exc).__name__}")
             elif key == ord("m") and ar.is_finished():
                 diagnostic_frame = frame.copy()
                 try:
@@ -217,17 +228,17 @@ def main(argv: list[str] | None = None) -> int:
                         missing = " · 출발점 미검출" if data.start is None else ""
                         if data.goal is None:
                             missing += " · 도착점 미검출"
-                        message = (f"맵 {data.rows}x{data.cols} · 장애물 {obstacles}개"
-                                   f"{missing} · R: 실시간 화면")
+                        show_message(f"맵 {data.rows}x{data.cols} · 장애물 {obstacles}개"
+                                     f"{missing} · R: 실시간 화면")
                     else:
-                        message = format_map_result(map_result)
+                        show_message(format_map_result(map_result))
                         print(message)
                 except Exception as exc:
                     traceback.print_exc()
-                    message = f"맵 인식 실행 오류: {type(exc).__name__}"
+                    show_message(f"맵 인식 실행 오류: {type(exc).__name__}")
             elif key == ord("r"):
                 diagnostic_frame = None
-                message = None
+                show_message(None)
 
             if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                 break
