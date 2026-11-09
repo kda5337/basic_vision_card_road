@@ -51,11 +51,22 @@ Forward → Turn Right → Forward → Turn Right
 
 Multiple separate loops are supported. **Nested loops are not supported** in the current version.
 
-### Download and Print the Cards
+### Download and Print the Game Materials
 
-**[Download the Printable Command Cards (A4 PDF)](assets/printables/CardRoad_Cards_A4.pdf)**
+All materials needed to set up a physical CardRoad board are available as printable A4 PDFs:
 
-The PDF contains **18 cards: three copies of each of the six supported commands**. Print it on **A4 paper in landscape orientation at 100% / Actual Size** (disable *Fit to Page*), then cut along the black card borders. Place the cards in a single row below the grid map before starting the game.
+| Material | Download | Description |
+| --- | --- | --- |
+| **Command Cards** | [CardRoad_Cards_A4.pdf](assets/printables/CardRoad_Cards_A4.pdf) | 18 cards: three copies of each of the six commands. |
+| **Grid Maps** | [CardRoad_A4_Grid_Maps_7x5_6x6_4x4.pdf](assets/printables/CardRoad_A4_Grid_Maps_7x5_6x6_4x4.pdf) | Blank grids in 7×5, 6×6, and 4×4 sizes. |
+| **Map Markers** | [CardRoad_A4_Markers_For_7x5_6x6_4x4.pdf](assets/printables/CardRoad_A4_Markers_For_7x5_6x6_4x4.pdf) | Printable Start, Goal, and Obstacle markers for the maps. |
+
+1. Print the selected grid map and marker sheets on **A4 paper at 100% / Actual Size** (disable *Fit to Page*).
+2. Cut out the markers and place **Start (green)**, **Goal (red)**, and **obstacles (black)** in the grid cells.
+3. Print the command cards on **A4 paper in landscape orientation**, also at 100% / Actual Size, and cut along their borders.
+4. Arrange the command cards **in one row below the map**, from left to right in execution order.
+
+You can also draw your own grid by hand instead of using the printable maps, provided its lines and markers are clearly visible to the webcam.
 
 ### Execution Outcomes
 
@@ -175,6 +186,7 @@ basic_vision_card_road/
 │   ├── ar_visualization.py       # AR rendering and UI
 │   └── assets/fonts/             # Bundled Korean font
 ├── templates/                    # Six command-symbol templates
+├── assets/printables/            # A4 grid maps, markers, and command cards
 ├── test_pictures/                # Test images
 ├── examples/                     # Standalone demos and experiments
 ├── tests/                        # Automated tests
@@ -222,4 +234,3 @@ The standalone demo uses predefined map data and execution records. **It is not 
 - [Recorded Demo (YouTube)](https://youtu.be/rR2XfpJaZC8)
 - [Project Documentation (Notion)](https://app.notion.com/p/3fe8b9caf86580b09898c8b12a11681f)
 - [AR Development Notes](docs/ar_development.md)
-
